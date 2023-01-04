@@ -1,11 +1,11 @@
+import numpy as np
+import random
+from src import train
+from torch.utils.data import DataLoader
+from src.utils import *
+import argparse
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-import argparse
-from src.utils import *
-from torch.utils.data import DataLoader
-from src import train
-import random
-import numpy as np
 parser = argparse.ArgumentParser(description='MOSEI Sentiment Analysis')
 parser.add_argument('-f', default='', type=str)
 
@@ -112,7 +112,8 @@ criterion_dict = {
 torch.set_default_tensor_type('torch.FloatTensor')
 if torch.cuda.is_available():
     if args.no_cuda:
-        print("WARNING: You have a CUDA device, so you should probably not run with --no_cuda")
+        print(
+            "WARNING: You have a CUDA device, so you should probably not run with --no_cuda")
     else:
         torch.cuda.manual_seed(args.seed)
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
@@ -152,9 +153,11 @@ hyp_params.use_cuda = use_cuda
 hyp_params.dataset = dataset
 hyp_params.when = args.when
 hyp_params.batch_chunk = args.batch_chunk
-hyp_params.n_train, hyp_params.n_valid, hyp_params.n_test = len(train_data), len(valid_data), len(test_data)
+hyp_params.n_train, hyp_params.n_valid, hyp_params.n_test = len(
+    train_data), len(valid_data), len(test_data)
 hyp_params.model = str.upper(args.model.strip())
 hyp_params.output_dim = output_dim_dict.get(dataset, 1)
+# only used in base model
 hyp_params.criterion = criterion_dict.get(dataset, 'L1Loss')
 
 
@@ -165,7 +168,8 @@ if __name__ == '__main__':
     '''
 
     print(args)
-    acc7, acc2, f_score, mae, corr = train.initiate(hyp_params, train_loader, valid_loader, test_loader)
+    acc7, acc2, f_score, mae, corr = train.initiate(
+        hyp_params, train_loader, valid_loader, test_loader)
 # print("****************************************************")
 # print("****************************************************")
 # print("acc7: {:5.3f}, acc2: {:5.3f}, f1_score: {:5.3f}, mae: {:5.3f}, corr: {:5.3f}"

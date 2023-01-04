@@ -8,15 +8,21 @@ from src.eval_metrics import *
 
 
 def initiate(hyp_params, train_loader, valid_loader, test_loader):
+    # getattr(models, hyp_params.model + 'Model'): MOEModel(by default)
     model = getattr(models, hyp_params.model + 'Model')(hyp_params)
 
     if hyp_params.use_cuda:
         model = model.cuda()
 
-    optimizer = getattr(optim, hyp_params.optim)(model.parameters(), lr=hyp_params.lr)
+    # Adam
+    optimizer = getattr(optim, hyp_params.optim)(
+        model.parameters(), lr=hyp_params.lr)
+
+    # L1Loss actually not used
     criterion = getattr(nn, hyp_params.criterion)()
 
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=hyp_params.when, factor=0.1, verbose=True)
+    scheduler = ReduceLROnPlateau(
+        optimizer, mode='min', patience=hyp_params.when, factor=0.1, verbose=True)
     settings = {'model': model,
                 'optimizer': optimizer,
                 'criterion': criterion,
@@ -32,8 +38,11 @@ def initiate(hyp_params, train_loader, valid_loader, test_loader):
 ####################################################################
 
 def train_model(settings, hyp_params, train_loader, valid_loader, test_loader):
+    # model: transformer_encoder with dropout
     model = settings['model']
+    # optimizer: Adam, lr: 1e-3
     optimizer = settings['optimizer']
+    # criterion: L1, not used in training stage, but in inference stage
     criterion = settings['criterion']
     scheduler = settings['scheduler']
 
@@ -44,18 +53,23 @@ def train_model(settings, hyp_params, train_loader, valid_loader, test_loader):
         proc_loss, proc_size = 0, 0
         start_time = time.time()
         for i_batch, (batch_X, batch_Y, batch_META) in enumerate(train_loader):
+
+            # text, audio, vision: (batch_size, seq_len/channel_num)
             sample_ind, text, audio, vision = batch_X
+            # eval_attr: (batch_size, 1)
             eval_attr = batch_Y.squeeze(-1)  # if num of labels is 1
 
             model.zero_grad()
 
             if hyp_params.use_cuda:
                 with torch.cuda.device(0):
-                    text, audio, vision, eval_attr = text.cuda(), audio.cuda(), vision.cuda(), eval_attr.cuda()
+                    text, audio, vision, eval_attr = text.cuda(
+                    ), audio.cuda(), vision.cuda(), eval_attr.cuda()
                     if hyp_params.dataset == 'iemocap':
                         eval_attr = eval_attr.long()
 
             batch_size = text.size(0)
+            # torch.chunk(x, chunk_num) -> tuple(chunk_num)
             batch_chunk = hyp_params.batch_chunk
 
             combined_loss = 0
@@ -76,7 +90,8 @@ def train_model(settings, hyp_params, train_loader, valid_loader, test_loader):
                         if hyp_params.dataset == 'iemocap':
                             preds_i = preds_i.view(-1, 2)
                             eval_attr_i = eval_attr_i.view(-1)
-                        raw_loss_i = criterion(preds_i, eval_attr_i) / batch_chunk
+                        raw_loss_i = criterion(
+                            preds_i, eval_attr_i) / batch_chunk
                         raw_loss_i.backward()
                         raw_loss = raw_loss + raw_loss_i
                     combined_loss = raw_loss
@@ -91,6 +106,8 @@ def train_model(settings, hyp_params, train_loader, valid_loader, test_loader):
             elif hyp_params.model == 'MOE':
                 if batch_chunk > 1:
                     raw_loss = combined_loss = 0
+                    # can run chunk other than batch
+                    # optimize more times
                     text_chunks = text.chunk(batch_chunk, dim=0)
                     audio_chunks = audio.chunk(batch_chunk, dim=0)
                     vision_chunks = vision.chunk(batch_chunk, dim=0)
@@ -100,17 +117,24 @@ def train_model(settings, hyp_params, train_loader, valid_loader, test_loader):
                         text_i, audio_i, vision_i = text_chunks[i], audio_chunks[i], vision_chunks[i]
                         eval_attr_i = eval_attr_chunks[i]
                         mu_l_i, v_l_i, alpha_l_i, beta_l_i, mu_a_i, v_a_i, alpha_a_i, beta_a_i, mu_v_i, v_v_i, \
-                        alpha_v_i, beta_v_i = net(text_i, audio_i, vision_i)
+                            alpha_v_i, beta_v_i = net(
+                                text_i, audio_i, vision_i)
+
+                        # moe_nig is simple operation to fuse model(late fusion)
+                        # s = l + a + v
                         mu_s_i, v_s_i, alpha_s_i, beta_s_i = \
-                            moe_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i, mu_a_i, v_a_i, alpha_a_i, beta_a_i)
+                            moe_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i,
+                                    mu_a_i, v_a_i, alpha_a_i, beta_a_i)
                         mu_s_i, v_s_i, alpha_s_i, beta_s_i = \
-                            moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i, mu_v_i, v_v_i, alpha_v_i, beta_v_i)
+                            moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i,
+                                    mu_v_i, v_v_i, alpha_v_i, beta_v_i)
                         if hyp_params.dataset == 'iemocap':
                             eval_attr_i = eval_attr_i.view(-1)
                         raw_loss_i = criterion_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i, eval_attr_i, hyp_params) + \
-                                     criterion_nig(mu_a_i, v_a_i, alpha_a_i, beta_a_i, eval_attr_i, hyp_params) + \
-                                     criterion_nig(mu_v_i, v_v_i, alpha_v_i, beta_v_i, eval_attr_i, hyp_params) + \
-                                     criterion_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i, eval_attr_i, hyp_params)
+                            criterion_nig(mu_a_i, v_a_i, alpha_a_i, beta_a_i, eval_attr_i, hyp_params) + \
+                            criterion_nig(mu_v_i, v_v_i, alpha_v_i, beta_v_i, eval_attr_i, hyp_params) + \
+                            criterion_nig(mu_s_i, v_s_i, alpha_s_i,
+                                          beta_s_i, eval_attr_i, hyp_params)
 
                         raw_loss_i.backward()
                         raw_loss = raw_loss + raw_loss_i
@@ -118,17 +142,20 @@ def train_model(settings, hyp_params, train_loader, valid_loader, test_loader):
 
                 else:
                     mu_l_i, v_l_i, alpha_l_i, beta_l_i, mu_a_i, v_a_i, alpha_a_i, beta_a_i, mu_v_i, v_v_i, \
-                    alpha_v_i, beta_v_i = net(text, audio, vision)
+                        alpha_v_i, beta_v_i = net(text, audio, vision)
                     mu_s_i, v_s_i, alpha_s_i, beta_s_i = \
-                        moe_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i, mu_a_i, v_a_i, alpha_a_i, beta_a_i)
+                        moe_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i,
+                                mu_a_i, v_a_i, alpha_a_i, beta_a_i)
                     mu_s_i, v_s_i, alpha_s_i, beta_s_i = \
-                        moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i, mu_v_i, v_v_i, alpha_v_i, beta_v_i)
+                        moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i,
+                                mu_v_i, v_v_i, alpha_v_i, beta_v_i)
                     if hyp_params.dataset == 'iemocap':
                         eval_attr = eval_attr.view(-1)
                     raw_loss = criterion_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i, eval_attr, hyp_params) + \
-                                 criterion_nig(mu_a_i, v_a_i, alpha_a_i, beta_a_i, eval_attr, hyp_params) + \
-                                 criterion_nig(mu_v_i, v_v_i, alpha_v_i, beta_v_i, eval_attr, hyp_params) + \
-                                 criterion_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i, eval_attr, hyp_params)
+                        criterion_nig(mu_a_i, v_a_i, alpha_a_i, beta_a_i, eval_attr, hyp_params) + \
+                        criterion_nig(mu_v_i, v_v_i, alpha_v_i, beta_v_i, eval_attr, hyp_params) + \
+                        criterion_nig(mu_s_i, v_s_i, alpha_s_i,
+                                      beta_s_i, eval_attr, hyp_params)
                     combined_loss = raw_loss
                     combined_loss.backward()
             elif hyp_params.model == 'MOE_pseudo':
@@ -142,40 +169,53 @@ def train_model(settings, hyp_params, train_loader, valid_loader, test_loader):
                     for i in range(batch_chunk):
                         text_i, audio_i, vision_i = text_chunks[i], audio_chunks[i], vision_chunks[i]
                         eval_attr_i = eval_attr_chunks[i]
+
+                        # c is pseudo modal
                         mu_l_i, v_l_i, alpha_l_i, beta_l_i, mu_a_i, v_a_i, alpha_a_i, beta_a_i, mu_v_i, v_v_i, \
-                        alpha_v_i, beta_v_i, mu_c_i, v_c_i, alpha_c_i, beta_c_i = net(text_i, audio_i, vision_i)
+                            alpha_v_i, beta_v_i, mu_c_i, v_c_i, alpha_c_i, beta_c_i = net(
+                                text_i, audio_i, vision_i)
+                        # s = l + a + v
                         mu_s_i, v_s_i, alpha_s_i, beta_s_i = \
-                            moe_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i, mu_a_i, v_a_i, alpha_a_i, beta_a_i)
+                            moe_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i,
+                                    mu_a_i, v_a_i, alpha_a_i, beta_a_i)
                         mu_s_i, v_s_i, alpha_s_i, beta_s_i = \
-                            moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i, mu_v_i, v_v_i, alpha_v_i, beta_v_i)
+                            moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i,
+                                    mu_v_i, v_v_i, alpha_v_i, beta_v_i)
                         mu_s_i, v_s_i, alpha_s_i, beta_s_i = \
-                            moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i, mu_c_i, v_c_i, alpha_c_i, beta_c_i)
+                            moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i,
+                                    mu_c_i, v_c_i, alpha_c_i, beta_c_i)
                         if hyp_params.dataset == 'iemocap':
                             eval_attr_i = eval_attr_i.view(-1)
                         raw_loss_i = criterion_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i, eval_attr_i, hyp_params) + \
-                                     criterion_nig(mu_a_i, v_a_i, alpha_a_i, beta_a_i, eval_attr_i, hyp_params) + \
-                                     criterion_nig(mu_v_i, v_v_i, alpha_v_i, beta_v_i, eval_attr_i, hyp_params) + \
-                                     criterion_nig(mu_c_i, v_c_i, alpha_c_i, beta_c_i, eval_attr_i, hyp_params) + \
-                                     criterion_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i, eval_attr_i, hyp_params)
+                            criterion_nig(mu_a_i, v_a_i, alpha_a_i, beta_a_i, eval_attr_i, hyp_params) + \
+                            criterion_nig(mu_v_i, v_v_i, alpha_v_i, beta_v_i, eval_attr_i, hyp_params) + \
+                            criterion_nig(mu_c_i, v_c_i, alpha_c_i, beta_c_i, eval_attr_i, hyp_params) + \
+                            criterion_nig(mu_s_i, v_s_i, alpha_s_i,
+                                          beta_s_i, eval_attr_i, hyp_params)
                         raw_loss_i.backward()
                         raw_loss = raw_loss + raw_loss_i
                     combined_loss = raw_loss
                 else:
                     mu_l_i, v_l_i, alpha_l_i, beta_l_i, mu_a_i, v_a_i, alpha_a_i, beta_a_i, mu_v_i, v_v_i, \
-                    alpha_v_i, beta_v_i, mu_c_i, v_c_i, alpha_c_i, beta_c_i = net(text, audio, vision)
+                        alpha_v_i, beta_v_i, mu_c_i, v_c_i, alpha_c_i, beta_c_i = net(
+                            text, audio, vision)
                     mu_s_i, v_s_i, alpha_s_i, beta_s_i = \
-                        moe_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i, mu_a_i, v_a_i, alpha_a_i, beta_a_i)
+                        moe_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i,
+                                mu_a_i, v_a_i, alpha_a_i, beta_a_i)
                     mu_s_i, v_s_i, alpha_s_i, beta_s_i = \
-                        moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i, mu_v_i, v_v_i, alpha_v_i, beta_v_i)
+                        moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i,
+                                mu_v_i, v_v_i, alpha_v_i, beta_v_i)
                     mu_s_i, v_s_i, alpha_s_i, beta_s_i = \
-                        moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i, mu_c_i, v_c_i, alpha_c_i, beta_c_i)
+                        moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i,
+                                mu_c_i, v_c_i, alpha_c_i, beta_c_i)
                     if hyp_params.dataset == 'iemocap':
                         eval_attr = eval_attr.view(-1)
                     raw_loss = criterion_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i, eval_attr, hyp_params) + \
-                                 criterion_nig(mu_a_i, v_a_i, alpha_a_i, beta_a_i, eval_attr, hyp_params) + \
-                                 criterion_nig(mu_v_i, v_v_i, alpha_v_i, beta_v_i, eval_attr, hyp_params) + \
-                                 criterion_nig(mu_c_i, v_c_i, alpha_c_i, beta_c_i, eval_attr, hyp_params) + \
-                                 criterion_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i, eval_attr, hyp_params)
+                        criterion_nig(mu_a_i, v_a_i, alpha_a_i, beta_a_i, eval_attr, hyp_params) + \
+                        criterion_nig(mu_v_i, v_v_i, alpha_v_i, beta_v_i, eval_attr, hyp_params) + \
+                        criterion_nig(mu_c_i, v_c_i, alpha_c_i, beta_c_i, eval_attr, hyp_params) + \
+                        criterion_nig(mu_s_i, v_s_i, alpha_s_i,
+                                      beta_s_i, eval_attr, hyp_params)
                     combined_loss = raw_loss
                     combined_loss.backward()
             elif hyp_params.model == 'NIG':
@@ -189,11 +229,13 @@ def train_model(settings, hyp_params, train_loader, valid_loader, test_loader):
                     for i in range(batch_chunk):
                         text_i, audio_i, vision_i = text_chunks[i], audio_chunks[i], vision_chunks[i]
                         eval_attr_i = eval_attr_chunks[i]
-                        mu_i, v_i, alpha_i, beta_i = net(text_i, audio_i, vision_i)
+                        mu_i, v_i, alpha_i, beta_i = net(
+                            text_i, audio_i, vision_i)
 
                         if hyp_params.dataset == 'iemocap':
                             eval_attr_i = eval_attr_i.view(-1)
-                        raw_loss_i = criterion_nig(mu_i, v_i, alpha_i, beta_i, eval_attr_i, hyp_params)
+                        raw_loss_i = criterion_nig(
+                            mu_i, v_i, alpha_i, beta_i, eval_attr_i, hyp_params)
                         raw_loss_i.backward()
                         raw_loss = raw_loss + raw_loss_i
                     combined_loss = raw_loss
@@ -201,7 +243,8 @@ def train_model(settings, hyp_params, train_loader, valid_loader, test_loader):
                     mu_i, v_i, alpha_i, beta_i = net(text, audio, vision)
                     if hyp_params.dataset == 'iemocap':
                         eval_attr = eval_attr.view(-1)
-                    raw_loss = criterion_nig(mu_i, v_i, alpha_i, beta_i, eval_attr, hyp_params)
+                    raw_loss = criterion_nig(
+                        mu_i, v_i, alpha_i, beta_i, eval_attr, hyp_params)
                     combined_loss = raw_loss
                     combined_loss.backward()
 
@@ -220,7 +263,8 @@ def train_model(settings, hyp_params, train_loader, valid_loader, test_loader):
 
                         if hyp_params.dataset == 'iemocap':
                             eval_attr_i = eval_attr_i.view(-1)
-                        raw_loss_i = sum(0.5 * (torch.log(2 * np.pi * (sigma_i)) + ((eval_attr_i - mu_i) ** 2) / (sigma_i))) / len(mu_i)
+                        raw_loss_i = sum(0.5 * (torch.log(2 * np.pi * (sigma_i)) +
+                                         ((eval_attr_i - mu_i) ** 2) / (sigma_i))) / len(mu_i)
                         raw_loss = raw_loss + raw_loss_i
                         raw_loss_i.backward()
                     combined_loss = raw_loss
@@ -228,7 +272,8 @@ def train_model(settings, hyp_params, train_loader, valid_loader, test_loader):
                     mu, sigma = net(text, audio, vision)
                     if hyp_params.dataset == 'iemocap':
                         eval_attr = eval_attr.view(-1)
-                    raw_loss = sum(0.5 * (torch.log(2 * np.pi * (sigma)) + ((eval_attr - mu) ** 2) / (sigma))) / len(mu)
+                    raw_loss = sum(0.5 * (torch.log(2 * np.pi * (sigma)) +
+                                   ((eval_attr - mu) ** 2) / (sigma))) / len(mu)
                     combined_loss = raw_loss
                     combined_loss.backward()
 
@@ -263,7 +308,8 @@ def train_model(settings, hyp_params, train_loader, valid_loader, test_loader):
 
                 if hyp_params.use_cuda:
                     with torch.cuda.device(0):
-                        text, audio, vision, eval_attr = text.cuda(), audio.cuda(), vision.cuda(), eval_attr.cuda()
+                        text, audio, vision, eval_attr = text.cuda(
+                        ), audio.cuda(), vision.cuda(), eval_attr.cuda()
                         if hyp_params.dataset == 'iemocap':
                             eval_attr = eval_attr.long()
 
@@ -272,33 +318,41 @@ def train_model(settings, hyp_params, train_loader, valid_loader, test_loader):
                 net = nn.DataParallel(model) if batch_size > 16 else model
                 if hyp_params.model == 'MOE':
                     mu_l_i, v_l_i, alpha_l_i, beta_l_i, mu_a_i, v_a_i, alpha_a_i, beta_a_i, mu_v_i, v_v_i, \
-                    alpha_v_i, beta_v_i = net(text, audio, vision)
+                        alpha_v_i, beta_v_i = net(text, audio, vision)
                     mu_s_i, v_s_i, alpha_s_i, beta_s_i = \
-                        moe_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i, mu_a_i, v_a_i, alpha_a_i, beta_a_i)
+                        moe_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i,
+                                mu_a_i, v_a_i, alpha_a_i, beta_a_i)
                     preds, v_s_i, alpha_s_i, beta_s_i = \
-                        moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i, mu_v_i, v_v_i, alpha_v_i, beta_v_i)
+                        moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i,
+                                mu_v_i, v_v_i, alpha_v_i, beta_v_i)
                 if hyp_params.model == 'MOE_pseudo':
                     mu_l_i, v_l_i, alpha_l_i, beta_l_i, mu_a_i, v_a_i, alpha_a_i, beta_a_i, mu_v_i, v_v_i, \
-                    alpha_v_i, beta_v_i, mu_c_i, v_c_i, alpha_c_i, beta_c_i = net(text, audio, vision)
+                        alpha_v_i, beta_v_i, mu_c_i, v_c_i, alpha_c_i, beta_c_i = net(
+                            text, audio, vision)
                     mu_s_i, v_s_i, alpha_s_i, beta_s_i = \
-                        moe_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i, mu_a_i, v_a_i, alpha_a_i, beta_a_i)
+                        moe_nig(mu_l_i, v_l_i, alpha_l_i, beta_l_i,
+                                mu_a_i, v_a_i, alpha_a_i, beta_a_i)
                     mu_s_i, v_s_i, alpha_s_i, beta_s_i = \
-                        moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i, mu_v_i, v_v_i, alpha_v_i, beta_v_i)
+                        moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i,
+                                mu_v_i, v_v_i, alpha_v_i, beta_v_i)
                     preds, v_s_i, alpha_s_i, beta_s_i = \
-                        moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i, mu_c_i, v_c_i, alpha_c_i, beta_c_i)
+                        moe_nig(mu_s_i, v_s_i, alpha_s_i, beta_s_i,
+                                mu_c_i, v_c_i, alpha_c_i, beta_c_i)
                 if hyp_params.model == 'NIG':
                     preds, _, _, _ = net(text, audio, vision)
                 if hyp_params.model == 'GAUSSIAN':
                     preds, _ = net(text, audio, vision)
                 if hyp_params.dataset == 'iemocap':
                     eval_attr = eval_attr.view(-1)
-                total_loss = total_loss + criterion(preds, eval_attr).item() * batch_size
+                total_loss = total_loss + \
+                    criterion(preds, eval_attr).item() * batch_size
 
                 # Collect the results into dictionary
                 results.append(preds)
                 truths.append(eval_attr)
 
-        avg_loss = total_loss / (hyp_params.n_test if test else hyp_params.n_valid)
+        avg_loss = total_loss / \
+            (hyp_params.n_test if test else hyp_params.n_valid)
 
         results = torch.cat(results)
         truths = torch.cat(truths)
@@ -330,7 +384,8 @@ def train_model(settings, hyp_params, train_loader, valid_loader, test_loader):
     _, results, truths = evaluate(model, criterion, test=True)
     acc7, acc2, f_score, mae, corr = 0, 0, 0, 0, 0
     if hyp_params.dataset == "mosei_senti":
-        acc7, acc2, f_score, mae, corr = eval_mosei_senti(results, truths, True)
+        acc7, acc2, f_score, mae, corr = eval_mosei_senti(
+            results, truths, True)
     elif hyp_params.dataset == 'mosi':
         acc7, acc2, f_score, mae, corr = eval_mosi(results, truths, True)
     elif hyp_params.dataset == 'iemocap':

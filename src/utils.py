@@ -6,10 +6,12 @@ from src.dataset import Multimodal_Datasets
 
 def get_data(args, dataset, split='train'):
     alignment = 'a' if args.aligned else 'na'
-    data_path = os.path.join(args.data_path, dataset) + f'_{split}_{alignment}.dt'
+    data_path = os.path.join(args.data_path, dataset) + \
+        f'_{split}_{alignment}.dt'
     if not os.path.exists(data_path):
         print(f"  - Creating new {split} data")
-        data = Multimodal_Datasets(args.data_path, dataset, split, args.aligned)
+        data = Multimodal_Datasets(
+            args.data_path, dataset, split, args.aligned)
         torch.save(data, data_path)
     else:
         print(f"  - Found cached {split} data")
@@ -38,7 +40,8 @@ def load_model(args, name=''):
 
 
 def criterion_gaussian(u, y, sigma):
-    loss = sum(0.5 * (torch.log(2 * np.pi * sigma) + ((y - u) ** 2) / sigma)) / len(u)
+    loss = sum(0.5 * (torch.log(2 * np.pi * sigma) +
+               ((y - u) ** 2) / sigma)) / len(u)
     return loss
 
 
@@ -54,8 +57,10 @@ def moe_nig(u1, la1, alpha1, beta1, u2, la2, alpha2, beta2):
 def criterion_nig(u, la, alpha, beta, y, hyp_params):
     # our loss function
     om = 2 * beta * (1 + la)
+    # len(u): size
     loss = sum(
         0.5 * torch.log(np.pi / la) - alpha * torch.log(om) + (alpha + 0.5) * torch.log(la * (u - y) ** 2 + om)) / len(u)
+    # hyp_params.risk: weight = 0.05
     lossr = hyp_params.risk * sum(torch.abs(u - y) * (2 * la + alpha)) / len(u)
     loss = loss + lossr
     return loss

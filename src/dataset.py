@@ -19,19 +19,24 @@ else:
 class Multimodal_Datasets(Dataset):
     def __init__(self, dataset_path, data='mosi', split_type='train', if_align=True):
         super(Multimodal_Datasets, self).__init__()
-        dataset_path = os.path.join(dataset_path, data + '_data.pkl' if if_align else data + '_data_noalign.pkl')
+        dataset_path = os.path.join(
+            dataset_path, data + '_data.pkl' if if_align else data + '_data_noalign.pkl')
         dataset = pickle.load(open(dataset_path, 'rb'))
 
         # These are torch tensors
-        self.vision = torch.tensor(dataset[split_type]['vision'].astype(np.float32)).cpu().detach()
-        self.text = torch.tensor(dataset[split_type]['text'].astype(np.float32)).cpu().detach()
+        self.vision = torch.tensor(
+            dataset[split_type]['vision'].astype(np.float32)).cpu().detach()
+        self.text = torch.tensor(
+            dataset[split_type]['text'].astype(np.float32)).cpu().detach()
         self.audio = dataset[split_type]['audio'].astype(np.float32)
         self.audio[self.audio == -np.inf] = 0
         self.audio = torch.tensor(self.audio).cpu().detach()
-        self.labels = torch.tensor(dataset[split_type]['labels'].astype(np.float32)).cpu().detach()
+        self.labels = torch.tensor(
+            dataset[split_type]['labels'].astype(np.float32)).cpu().detach()
 
         # Note: this is STILL an numpy array
-        self.meta = dataset[split_type]['id'] if 'id' in dataset[split_type].keys() else None
+        self.meta = dataset[split_type]['id'] if 'id' in dataset[split_type].keys(
+        ) else None
 
         self.data = data
 
@@ -56,7 +61,10 @@ class Multimodal_Datasets(Dataset):
     def __getitem__(self, index):
         X = (index, self.text[index], self.audio[index], self.vision[index])
         Y = self.labels[index]
-        META = (0, 0, 0) if self.meta is None else (self.meta[index][0], self.meta[index][1], self.meta[index][2])
+
+        # META is the id (in tuple)
+        META = (0, 0, 0) if self.meta is None else (
+            self.meta[index][0], self.meta[index][1], self.meta[index][2])
         if self.data == 'mosi':
             META = (self.meta[index][0].decode('UTF-8'), self.meta[index][1].decode('UTF-8'),
                     self.meta[index][2].decode('UTF-8'))
